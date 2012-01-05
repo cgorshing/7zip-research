@@ -4,18 +4,23 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 
 public class SevenZipDecoder {
   public static final int kEnd0x00 = 0x00;
   public static final int kHeader0x01 = 0x01;
   public static final int kAdditionalStreamsInfo0x03 = 0x03;
   public static final int kMainStreamsInfo0x04 = 0x04;
+  public static final int kFilesInfo0x05 = 0x05;
   public static final int kPackInfo0x06 = 0x06;
   public static final int kUnPackINfo0x07 = 0x07;
   public static final int kSubStreamsInfo0x08 = 0x08;
   public static final int kSize0x09 = 0x09;
   public static final int kCrc0x0A = 0x0A;
   public static final int kFolder0x0B = 0x0B;
+  public static final int kNames0x11 = 0x11;
+  public static final int kMTime0x14 = 0x14;
+  public static final int kAttributes0x15 = 0x15;
 
   public static void main(String[] args) throws IOException {
     FileInputStream inputStream = new FileInputStream("C:\\tmp\\chad.7z");
@@ -126,10 +131,83 @@ public class SevenZipDecoder {
 
     int nextSection = inputStream.read();
     if (nextSection == kCrc0x0A) {
+      int allAreDefined = inputStream.read();
+      if (allAreDefined == 0) {
 
+      }
+
+      byte [] crcData = new byte[4];
+      assert 4 == inputStream.read(crcData);
+      assert kEnd0x00 == inputStream.read();
     }
     else {
       throw new RuntimeException("Unimplemented");
+    }
+
+    assert kEnd0x00 == inputStream.read();
+
+    assert kFilesInfo0x05 == inputStream.read();
+    long numOfFiles = read7ZipUInt64(inputStream);
+    assert 1 == numOfFiles;
+
+    int propertyType = inputStream.read();
+
+    while (propertyType != kEnd0x00) {
+      long propertySize = read7ZipUInt64(inputStream);
+
+      if (kNames0x11 == propertyType) {
+        int external2 = inputStream.read();
+        long dataIndex = 0;
+        if (external2 != 0)
+          dataIndex = read7ZipUInt64(inputStream);
+
+        for (int i = 0; i < numOfFiles; ++i) {
+          byte [] ch = new byte[4096];
+          int index = 0;
+          assert 2 == inputStream.read(ch, 0, 2);
+          while (!(ch[index] == 0 && ch[index+1] == 0)) {
+            ++index;
+            assert 2 == inputStream.read(ch, index, 2);
+          }
+
+          assert "chad.gpg".equals(new String(ch).trim()) : new String(ch);
+        }
+      }
+      else if (kMTime0x14 == propertyType) {
+        int allDefined = inputStream.read();
+
+        if (allDefined == 0) {
+          throw new RuntimeException("Unimplemented");
+        }
+
+        int external2 = inputStream.read();
+        long dataIndex = 0;
+        if (external2 != 0)
+          dataIndex = read7ZipUInt64(inputStream);
+
+        for (int i = 0; i < numOfFiles; ++i) {
+          long modifiedAt = read7ZipUInt64(inputStream);
+          System.out.println(modifiedAt);
+          //assert 1 != modifiedAt;
+        }
+      }
+      else if (kAttributes0x15 == propertyType) {
+        int allDefined = inputStream.read();
+
+        if (allDefined == 0) throw new RuntimeException("Unimplemented");
+
+        int external2 = inputStream.read();
+
+        long dataIndex = 0;
+        if (external2 != 0)
+          dataIndex = read7ZipUInt64(inputStream);
+
+        byte [] attribute = new byte[4];
+        inputStream.read(attribute);
+        System.out.println(attribute);
+      }
+
+      propertyType = inputStream.read();
     }
 
     inputStream.close();
