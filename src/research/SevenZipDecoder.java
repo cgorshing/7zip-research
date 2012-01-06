@@ -1,12 +1,18 @@
 package research;
 
+import net.contrapunctus.lzma.LzmaInputStream;
+
+import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.Charset;
+import java.util.zip.Adler32;
+import java.util.zip.Checksum;
 
 public class SevenZipDecoder {
+  public static final int HeaderSize = 32;
   public static final int kEnd0x00 = 0x00;
   public static final int kHeader0x01 = 0x01;
   public static final int kAdditionalStreamsInfo0x03 = 0x03;
@@ -22,12 +28,38 @@ public class SevenZipDecoder {
   public static final int kMTime0x14 = 0x14;
   public static final int kAttributes0x15 = 0x15;
 
+  public static void foo(byte [] fileDataByteArray) throws IOException {
+    //System.getProperty("DEBUG_LzmaStreams"); }
+    //System.setProperty("DEBUG_LzmaStreams", "1");
+    System.setProperty("DEBUG_ConcurrentBuffer", "1");
+
+    Checksum ck = new Adler32();
+    int BUFSIZE = 8192;
+
+    int byteCount = 0;
+
+    ByteArrayInputStream bais = new ByteArrayInputStream(fileDataByteArray);
+    LzmaInputStream li = new LzmaInputStream(bais);
+    byte[] buf = new byte[BUFSIZE];
+    ck.reset();
+    int k = li.read(buf);
+    byteCount = 0;
+    while (k > 0) {
+      byteCount += k;
+      ck.update(buf, 0, k);
+      k = li.read(buf);
+    }
+    System.out.printf("%d bytes decompressed, checksum %X\n", byteCount, ck.getValue());
+    System.out.printf("ck.getValue() -> %d\n", ck.getValue());
+  }
+
   public static void main(String[] args) throws IOException {
-    FileInputStream inputStream = new FileInputStream("C:\\tmp\\chad.7z");
+    //FileInputStream input = new FileInputStream("C:\\tmp\\chad.7z");
+    RandomAccessFile input = new RandomAccessFile("C:\\tmp\\chad.7z", "r");
 
     byte[] header = new byte[6];
 
-    int read = inputStream.read(header);
+    int read = input.read(header);
 
     assert read == 6;
     assert header[0] == '7';
@@ -39,7 +71,7 @@ public class SevenZipDecoder {
 
     byte[] version = new byte[2];
 
-    read = inputStream.read(version);
+    read = input.read(version);
     assert read == 2;
     assert version[0] == (byte) 0;
     assert version[1] == (byte) 3;
@@ -47,7 +79,7 @@ public class SevenZipDecoder {
 
     byte[] startHeaderCRC = new byte[4];
 
-    read = inputStream.read(startHeaderCRC);
+    read = input.read(startHeaderCRC);
     assert read == 4;
 
     byte a = 15;
@@ -55,7 +87,7 @@ public class SevenZipDecoder {
     assert crc == -2078405524;
 
     byte[] startHeader = new byte[20];
-    read = inputStream.read(startHeader);
+    read = input.read(startHeader);
     assert read == 20;
     ByteBuffer byteBuffer = makeByteBuffer(startHeader);
     long nextHeaderOffset = byteBuffer.getLong();
@@ -65,157 +97,158 @@ public class SevenZipDecoder {
     int nextHeaderCrc = byteBuffer.getInt(16);
     assert nextHeaderCrc == -266949232;
 
-    long skip = inputStream.skip(nextHeaderOffset);
+    input.seek(HeaderSize + nextHeaderOffset);
+    //long skip = input.skip(nextHeaderOffset);
 
-    assert kHeader0x01 == inputStream.read();
-    assert kMainStreamsInfo0x04 == inputStream.read();
-    assert kPackInfo0x06 == inputStream.read();
+    assert kHeader0x01 == input.read();
+    assert kMainStreamsInfo0x04 == input.read();
+    assert kPackInfo0x06 == input.read();
 
-    long packOffset = read7ZipUInt64(inputStream);
-    long numberOfStreams = read7ZipUInt64(inputStream);
+    long packOffset = read7ZipUInt64(input);
+    long numberOfStreams = read7ZipUInt64(input);
 
     assert numberOfStreams == 1;
 
-    assert kSize0x09 == inputStream.read();
+    assert kSize0x09 == input.read();
 
     for (int i = 0; i < numberOfStreams; ++i) {
-      long packsize = read7ZipUInt64(inputStream);
+      int packsize = (int)read7ZipUInt64(input);
 
       assert packsize == 3307 : packsize;
+
+      long pointer = input.getFilePointer();
+      byte [] data = new byte[packsize];
+      input.seek(HeaderSize + packOffset);
+      input.read(data);
+      foo(data);
+      input.seek(pointer);
     }
 
-    assert kEnd0x00 == inputStream.read(); // This ends the PackInfo section
+    assert kEnd0x00 == input.read(); // This ends the PackInfo section
 
     //figure out what optional section is next
-    assert kUnPackINfo0x07 == inputStream.read();
-    assert kFolder0x0B == inputStream.read();
-    long numOfFolders = read7ZipUInt64(inputStream);
+    assert kUnPackINfo0x07 == input.read();
+    assert kFolder0x0B == input.read();
+    long numOfFolders = read7ZipUInt64(input);
     assert 1 == numOfFolders;
-    int external = inputStream.read();
+    int external = input.read();
     if (external == 0) {
       //Folders[NumFolders]
-      assert 1 == inputStream.read(); // Num of Coders;
-      int val = inputStream.read();
+      assert 1 == input.read(); // Num of Coders;
+      int val = input.read();
       int codecIdSize = 0x0F & val;
       boolean isComplexCoder = (0x10 & val) != 0;
       boolean areAttributes = (0x20 & val) != 0;
 
-      byte [] codecId = new byte[codecIdSize];
-      assert codecIdSize == inputStream.read(codecId);
+      byte[] codecId = new byte[codecIdSize];
+      assert codecIdSize == input.read(codecId);
 
       if (isComplexCoder) {
         throw new RuntimeException("Not sure what to do with this.");
       }
 
       if (areAttributes) {
-        int propertiesSize = (int)read7ZipUInt64(inputStream);
-        byte [] properties = new byte[propertiesSize];
-        assert propertiesSize == inputStream.read(properties);
+        int propertiesSize = (int) read7ZipUInt64(input);
+        byte[] properties = new byte[propertiesSize];
+        assert propertiesSize == input.read(properties);
       }
-    }
-    else if (external == 1) {
+    } else if (external == 1) {
       //UINT64 DataStreamIndex
     }
 
-    assert 0x0C == inputStream.read();
+    assert 0x0C == input.read();
 
     for (int i = 0; i < numOfFolders; ++i) {
       for (int j = 0; j < numberOfStreams; ++j) {
-        long l = read7ZipUInt64(inputStream);
+        long l = read7ZipUInt64(input);
         assert 4242 == l : l;
       }
     }
 
-    assert kEnd0x00 == inputStream.read();
-    assert kSubStreamsInfo0x08 == inputStream.read();
+    assert kEnd0x00 == input.read();
+    assert kSubStreamsInfo0x08 == input.read();
 
-    int nextSection = inputStream.read();
+    int nextSection = input.read();
     if (nextSection == kCrc0x0A) {
-      int allAreDefined = inputStream.read();
+      int allAreDefined = input.read();
       if (allAreDefined == 0) {
 
       }
 
-      byte [] crcData = new byte[4];
-      assert 4 == inputStream.read(crcData);
-      assert kEnd0x00 == inputStream.read();
-    }
-    else {
+      byte[] crcData = new byte[4];
+      assert 4 == input.read(crcData);
+      assert kEnd0x00 == input.read();
+    } else {
       throw new RuntimeException("Unimplemented");
     }
 
-    assert kEnd0x00 == inputStream.read();
+    assert kEnd0x00 == input.read();
 
-    assert kFilesInfo0x05 == inputStream.read();
-    long numOfFiles = read7ZipUInt64(inputStream);
+    assert kFilesInfo0x05 == input.read();
+    long numOfFiles = read7ZipUInt64(input);
     assert 1 == numOfFiles;
 
-    int propertyType = inputStream.read();
+    int propertyType = input.read();
 
     while (propertyType != kEnd0x00) {
-      long propertySize = read7ZipUInt64(inputStream);
+      long propertySize = read7ZipUInt64(input);
 
       if (kNames0x11 == propertyType) {
-        int external2 = inputStream.read();
+        int external2 = input.read();
         long dataIndex = 0;
         if (external2 != 0)
-          dataIndex = read7ZipUInt64(inputStream);
+          dataIndex = read7ZipUInt64(input);
 
         for (int i = 0; i < numOfFiles; ++i) {
-          byte [] ch = new byte[4096];
+          byte[] ch = new byte[4096];
           int index = 0;
-          assert 2 == inputStream.read(ch, 0, 2);
-          while (!(ch[index] == 0 && ch[index+1] == 0)) {
+          assert 2 == input.read(ch, 0, 2);
+          while (!(ch[index] == 0 && ch[index + 1] == 0)) {
             ++index;
-            assert 2 == inputStream.read(ch, index, 2);
+            assert 2 == input.read(ch, index, 2);
           }
 
           assert "chad.gpg".equals(new String(ch).trim()) : new String(ch);
         }
-      }
-      else if (kMTime0x14 == propertyType) {
-        int allDefined = inputStream.read();
+      } else if (kMTime0x14 == propertyType) {
+        int allDefined = input.read();
 
         if (allDefined == 0) {
           throw new RuntimeException("Unimplemented");
         }
 
-        int external2 = inputStream.read();
+        int external2 = input.read();
         long dataIndex = 0;
         if (external2 != 0)
-          dataIndex = read7ZipUInt64(inputStream);
+          dataIndex = read7ZipUInt64(input);
 
         for (int i = 0; i < numOfFiles; ++i) {
-          long modifiedAt = read7ZipUInt64(inputStream);
-          System.out.println(modifiedAt);
-          //assert 1 != modifiedAt;
+          long modifiedAt = read7ZipUInt64(input);
         }
-      }
-      else if (kAttributes0x15 == propertyType) {
-        int allDefined = inputStream.read();
+      } else if (kAttributes0x15 == propertyType) {
+        int allDefined = input.read();
 
         if (allDefined == 0) throw new RuntimeException("Unimplemented");
 
-        int external2 = inputStream.read();
+        int external2 = input.read();
 
         long dataIndex = 0;
         if (external2 != 0)
-          dataIndex = read7ZipUInt64(inputStream);
+          dataIndex = read7ZipUInt64(input);
 
-        byte [] attribute = new byte[4];
-        inputStream.read(attribute);
-        System.out.println(attribute);
+        byte[] attribute = new byte[4];
+        input.read(attribute);
       }
 
-      propertyType = inputStream.read();
+      propertyType = input.read();
     }
 
-    inputStream.close();
+    input.close();
   }
 
-  private static long read7ZipUInt64(FileInputStream inputStream) throws IOException {
+  private static long read7ZipUInt64(RandomAccessFile input) throws IOException {
     //ThrowEndOfData();
-    int firstByte = inputStream.read();
+    int firstByte = input.read();
     int mask = 0x80;
     long value = 0;
     for (int i = 0; i < 8; ++i) {
@@ -226,7 +259,7 @@ public class SevenZipDecoder {
       }
 
       //ThrowEndOfData();
-      int nextByte = inputStream.read();
+      int nextByte = input.read();
       value |= (nextByte & 0xFF) << (8 * i);
 
       mask >>>= 1;
