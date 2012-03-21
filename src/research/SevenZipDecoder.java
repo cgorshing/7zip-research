@@ -1,17 +1,24 @@
 package research;
 
-import net.contrapunctus.lzma.LzmaInputStream;
+import lzma.sdk.lzma.Decoder;
+import lzma.streams.LzmaInputStream;
 
+import java.awt.event.ItemListener;
 import java.io.ByteArrayInputStream;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.Adler32;
+import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
 public class SevenZipDecoder {
+  public StartHeader StartHeader;
+  public List<Header> Headers = new ArrayList<Header>();
+
   public static final int HeaderSize = 32;
   public static final int kEnd0x00 = 0x00;
   public static final int kHeader0x01 = 0x01;
@@ -29,8 +36,8 @@ public class SevenZipDecoder {
   public static final int kAttributes0x15 = 0x15;
 
   public static void foo(byte [] fileDataByteArray) throws IOException {
-    //System.getProperty("DEBUG_LzmaStreams"); }
-    //System.setProperty("DEBUG_LzmaStreams", "1");
+    System.getProperty("DEBUG_LzmaStreams");
+    System.setProperty("DEBUG_LzmaStreams", "1");
     System.setProperty("DEBUG_ConcurrentBuffer", "1");
 
     Checksum ck = new Adler32();
@@ -38,19 +45,22 @@ public class SevenZipDecoder {
 
     int byteCount = 0;
 
+    //http://trac.greenstone.org/browser/other-projects/trunk/7z-ant/src/LZMA/LzmaInputStream.java?rev=17387
+
     ByteArrayInputStream bais = new ByteArrayInputStream(fileDataByteArray);
-    LzmaInputStream li = new LzmaInputStream(bais);
+    LzmaInputStream li = new LzmaInputStream(bais, new Decoder());
+
     byte[] buf = new byte[BUFSIZE];
     ck.reset();
     int k = li.read(buf);
-    byteCount = 0;
+
     while (k > 0) {
       byteCount += k;
       ck.update(buf, 0, k);
       k = li.read(buf);
     }
     System.out.printf("%d bytes decompressed, checksum %X\n", byteCount, ck.getValue());
-    System.out.printf("ck.getValue() -> %d\n", ck.getValue());
+    //System.out.printf("ck.getValue() -> %d\n", ck.getValue());
   }
 
   public static void main(String[] args) throws IOException {
@@ -76,26 +86,28 @@ public class SevenZipDecoder {
     assert version[0] == (byte) 0;
     assert version[1] == (byte) 3;
 
-
     byte[] startHeaderCRC = new byte[4];
 
     read = input.read(startHeaderCRC);
     assert read == 4;
 
-    byte a = 15;
     int crc = makeByteBuffer(startHeaderCRC).getInt();
-    assert crc == -2078405524;
+    System.out.println("CRC: " + crc);
+
+    CRC32 blah = new CRC32();
 
     byte[] startHeader = new byte[20];
     read = input.read(startHeader);
     assert read == 20;
+    blah.update(startHeader);
+    System.out.println("CRC32: " + blah.getValue());
     ByteBuffer byteBuffer = makeByteBuffer(startHeader);
     long nextHeaderOffset = byteBuffer.getLong();
-    assert nextHeaderOffset == 3307;
+    System.out.println("nextHeaderOffset: " + nextHeaderOffset);
     long nextHeaderSize = byteBuffer.getLong(8);
-    assert nextHeaderSize == 82;
+    System.out.println("nextHeaderSize: " + nextHeaderSize);
     int nextHeaderCrc = byteBuffer.getInt(16);
-    assert nextHeaderCrc == -266949232;
+    System.out.println("nextHeaderCrc: " + nextHeaderCrc);
 
     input.seek(HeaderSize + nextHeaderOffset);
     //long skip = input.skip(nextHeaderOffset);
@@ -114,13 +126,19 @@ public class SevenZipDecoder {
     for (int i = 0; i < numberOfStreams; ++i) {
       int packsize = (int)read7ZipUInt64(input);
 
-      assert packsize == 3307 : packsize;
+      System.out.println("packsize: " + packsize);
 
       long pointer = input.getFilePointer();
       byte [] data = new byte[packsize];
       input.seek(HeaderSize + packOffset);
       input.read(data);
       foo(data);
+      for (int ijk = 100; ijk < 121; ++ijk) {
+        System.out.println("looking at: " + ijk);
+        input.seek(ijk);
+        input.read(data);
+        foo(data);
+      }
       input.seek(pointer);
     }
 
@@ -154,6 +172,7 @@ public class SevenZipDecoder {
       }
     } else if (external == 1) {
       //UINT64 DataStreamIndex
+      throw new RuntimeException("Unimplemented");
     }
 
     assert 0x0C == input.read();
@@ -161,7 +180,7 @@ public class SevenZipDecoder {
     for (int i = 0; i < numOfFolders; ++i) {
       for (int j = 0; j < numberOfStreams; ++j) {
         long l = read7ZipUInt64(input);
-        assert 4242 == l : l;
+        System.out.println("file size: " + l);
       }
     }
 
@@ -172,7 +191,7 @@ public class SevenZipDecoder {
     if (nextSection == kCrc0x0A) {
       int allAreDefined = input.read();
       if (allAreDefined == 0) {
-
+        throw new RuntimeException("Unimplemented");
       }
 
       byte[] crcData = new byte[4];
@@ -208,7 +227,7 @@ public class SevenZipDecoder {
             assert 2 == input.read(ch, index, 2);
           }
 
-          assert "chad.gpg".equals(new String(ch).trim()) : new String(ch);
+          System.out.println("file name: " + new String(ch).trim());
         }
       } else if (kMTime0x14 == propertyType) {
         int allDefined = input.read();
