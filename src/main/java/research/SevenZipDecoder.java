@@ -112,7 +112,7 @@ public class SevenZipDecoder {
         System.out.println("nextHeaderSize: " + nextHeaderSize);
         int nextHeaderCrc = byteBuffer.getInt(16);
         System.out.println("nextHeaderCrc: " + nextHeaderCrc);
-
+        System.out.println("archive size: " + (nextHeaderOffset + nextHeaderSize + HeaderSize));
         input.seek(HeaderSize + nextHeaderOffset);
 
         bombOut(kHeader0x01 == input.read());
@@ -259,16 +259,24 @@ public class SevenZipDecoder {
                     throw new RuntimeException("Unimplemented");
                 }
 
-                int external2 = input.read(new byte[1]);
+                byte[] external2 = new byte[1];
+                input.read(external2);
                 long dataIndex = 0;
-                if (external2 != 0)
-                    dataIndex = read7ZipUInt64(input);
+                long lastPosition = -1L;
+                if (external2[0] != 0) {
+                    throw new RuntimeException("Unimplemented");
+                }
 
                 for (int i = 0; i < numOfFiles; ++i) {
-                    byte[] timeBuffer = new byte[4];
+                    byte[] timeBuffer = new byte[8];
                     input.read(timeBuffer);
-                    int modifiedAt = makeByteBuffer(timeBuffer).getInt();
-                    Date modifiedDate = new Date(modifiedAt * 1000);
+                    long modifiedAt = makeByteBuffer(timeBuffer).getLong();
+
+                    // Courtesy of http://www.frenk.com/2009/12/convert-filetime-to-unix-timestamp/
+                    long removeSpan = modifiedAt - 11644473600000L * 10000L; // removes span from 1603 to 1970 ...
+                    long millis = removeSpan / 10000L; // convert from 100's of nano's to millis
+                    Date modifiedDate = new Date(millis);
+
                     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
                     System.out.println("modified: " + sdf.format(modifiedDate));
                 }
