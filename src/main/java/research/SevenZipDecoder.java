@@ -16,10 +16,14 @@ import java.util.zip.CRC32;
 
 public class SevenZipDecoder {
     public static final int BUFSIZE = 8192;
+    public static final String filename = "C:\\tmp\\chad.7z";
+//    public static final String filename = "C:\\tmp\\names.7z";
+//    public static final String filename = "C:\\tmp\\20120331.7z";
 
     public static final int HeaderSize = 32;
     public static final int kEnd0x00 = 0x00;
     public static final int kHeader0x01 = 0x01;
+    public static final int kArchiveProperties0x02 = 0x02;
     public static final int kAdditionalStreamsInfo0x03 = 0x03;
     public static final int kMainStreamsInfo0x04 = 0x04;
     public static final int kFilesInfo0x05 = 0x05;
@@ -38,6 +42,7 @@ public class SevenZipDecoder {
     public static final int kLastAccessTime0x13 = 0x13;
     public static final int kLastWriteTime0x14 = 0x14;
     public static final int kAttributes0x15 = 0x15;
+    public static final int kEncodedHeader0x17 = 0x17;
 
     public static void inflate(byte[] fileDataByteArray) throws IOException {
         //http://docs.bugaco.com/7zip/7zFormat.txt
@@ -65,7 +70,7 @@ public class SevenZipDecoder {
     }
 
     public static void main(String[] args) throws IOException {
-        RandomAccessFile input = new RandomAccessFile("C:\\tmp\\chad.7z", "r");
+        RandomAccessFile input = new RandomAccessFile(filename, "r");
 
         StartHeader startHeader = readSignatureHeader(input);
 
@@ -97,7 +102,7 @@ public class SevenZipDecoder {
         byte[] startHeaderCRC = new byte[4];
         read = input.read(startHeaderCRC);
         bombOut(read == 4);
-        int crc = makeByteBuffer(startHeaderCRC).getInt();
+        long crc = makeByteBuffer(startHeaderCRC).getInt();
         System.out.println("StartHeaderCRC Read: " + crc);
 
         CRC32 crc32 = new CRC32();
@@ -108,8 +113,8 @@ public class SevenZipDecoder {
         read = input.read(fullStartHeader);
         bombOut(read == 20);
         crc32.update(fullStartHeader);
-        bombOut(crc32.getValue() == crc);
-        System.out.println("StartHeaderCRC Calculated: " + crc32.getValue());
+        bombOut(((int)crc32.getValue()) == crc);
+        System.out.println("StartHeaderCRC Calculated: " + (int)crc32.getValue());
         ByteBuffer byteBuffer = makeByteBuffer(fullStartHeader);
         startHeaderObject.NextHeaderOffset = byteBuffer.getLong();
         System.out.println("nextHeaderOffset: " + startHeaderObject.NextHeaderOffset);
@@ -117,7 +122,7 @@ public class SevenZipDecoder {
         startHeaderObject.NextHeaderSize = byteBuffer.getLong(8);
         System.out.println("nextHeaderSize: " + startHeaderObject.NextHeaderSize);
         startHeaderObject.NextHeaderCRC = byteBuffer.getInt(16);
-        System.out.println("nextHeaderCrc: " + startHeaderObject.NextHeaderCRC);
+        System.out.println("nextHeaderCrc: " + (int)startHeaderObject.NextHeaderCRC);
         System.out.println("archive size: " + (startHeaderObject.NextHeaderOffset + startHeaderObject.NextHeaderSize + HeaderSize));
 
         return startHeaderObject;
@@ -155,21 +160,35 @@ public class SevenZipDecoder {
     private static List<Header> readHeaders(RandomAccessFile input, StartHeader startHeaderObject) throws IOException {
         input.seek(HeaderSize + startHeaderObject.NextHeaderOffset);
 
-        bombOut(kHeader0x01 == input.read());
-
         int nid = input.read();
 
         while (nid != kEnd0x00) {
-            if (kMainStreamsInfo0x04 == nid) {
+            if (kEncodedHeader0x17 == nid) {
                 readStreamsInfo(input);
-            }
-            else if (kFilesInfo0x05 == nid) {
-                readFilesInfo(input);
-            }
-            else
-                throw new RuntimeException("Unimplemented");
 
-            nid = input.read();
+                //I'm not 100% sure about this break, but it looks like we do one or the other
+                break;
+            }
+            else if (kHeader0x01 == nid) {
+                nid = input.read();
+
+                while (nid != kEnd0x00) {
+                    //line 901 7zIn.cpp
+                    if (kMainStreamsInfo0x04 == nid) {
+                        readStreamsInfo(input);
+                    }
+                    else if (kFilesInfo0x05 == nid) {
+                        readFilesInfo(input);
+                    }
+                    else if (kArchiveProperties0x02 == nid) {
+                        throw new RuntimeException("Unimplemented");
+                    }
+                    else
+                        throw new RuntimeException("Unimplemented");
+
+                    nid = input.read();
+                }
+            }
         }
 
         return new ArrayList<Header>();
@@ -185,7 +204,6 @@ public class SevenZipDecoder {
             long propertySize = read7ZipUInt64(input);
 
             if (kEmptyStream0x0E == propertyType) {
-                System.out.println("Found kEmptyStream0x0E");
                 for (int i = 0; i < numOfFiles; ++i) {
                     int isEmptyStream = input.read(new byte[1]);
                 }
@@ -220,7 +238,6 @@ public class SevenZipDecoder {
                 System.out.println("Found kLastAccessTime0x13");
             }
             else if (kLastWriteTime0x14 == propertyType) {
-                System.out.println("Found kLastWriteTime");
                 int allDefined = input.read(new byte[1]);
 
                 if (allDefined == 0) {
@@ -249,7 +266,7 @@ public class SevenZipDecoder {
             }
             else if (kAttributes0x15 == propertyType) {
                 System.out.println("Found kAttributes0x15");
-                int allDefined = input.read(new byte[1]);
+                int allDefined = input.read();
 
                 if (allDefined == 0) throw new RuntimeException("Unimplemented");
 
@@ -270,14 +287,14 @@ public class SevenZipDecoder {
         int nid = input.read();
         long numberOfStreams = 0;
 
-        while (nid != kEnd0x00) {
-            if (nid == kPackInfo0x06) {
+        while (kEnd0x00 != nid) {
+            if (kPackInfo0x06 == nid) {
                 numberOfStreams = readPackInfo(input);
             }
-            else if (nid == kUnPackINfo0x07) {
+            else if (kUnPackINfo0x07 == nid) {
                 readCodersInfo(input, numberOfStreams);
             }
-            else if (nid == kSubStreamsInfo0x08) {
+            else if (kSubStreamsInfo0x08 == nid) {
                 readSubStreamsInfo(input);
             }
 
@@ -290,7 +307,7 @@ public class SevenZipDecoder {
         int nid = input.read();
 
         while (kEnd0x00 != nid) {
-            if (nid == kCrc0x0A) {
+            if (kCrc0x0A == nid) {
                 int allAreDefined = input.read();
                 if (allAreDefined == 0) {
                     throw new RuntimeException("Unimplemented");
@@ -324,9 +341,24 @@ public class SevenZipDecoder {
 
         while (kEnd0x00 != nid) {
             if (kCodersUnPackSize0x0C == nid) readCodersUnpackSize(input, numberOfStreams, numOfFolders);
-            else if (kCrc0x0A == nid) throw new RuntimeException("Unimplemented");
+            else if (kCrc0x0A == nid) readUnpackDigests(input, numberOfStreams);// throw new RuntimeException("Unimplemented");
 
             nid = input.read();
+        }
+    }
+
+    private static void readUnpackDigests(RandomAccessFile input, long numberOfStreams) throws IOException {
+        int allDefined = input.read();
+
+        if (allDefined == 0) {
+            throw new RuntimeException("Unimplemented");
+        }
+        else {
+            for (int i = 0; i < numberOfStreams; ++i) {
+                byte[] buffer = new byte[4];
+                int bytesRead = input.read(buffer);
+                long crc = makeByteBuffer(buffer).getInt();
+            }
         }
     }
 
