@@ -1,1 +1,35 @@
 Notes to come ...
+
+
+C:\tmp
+>7za l chad.7z -slt
+
+7-Zip (A) 9.20  Copyright (c) 1999-2010 Igor Pavlov  2010-11-18
+
+Listing archive: chad.7z
+
+--
+Path = chad.7z
+Type = 7z
+Method = LZMA
+Solid = -
+Blocks = 1
+Physical Size = 121
+Headers Size = 112
+
+----------
+Path = chad.txt
+Size = 4
+Packed Size = 9
+Modified = 2012-03-20 21:31:15
+Attributes = ....A
+CRC = 782AE2CE
+Encrypted = -
+Method = LZMA:16
+Block = 0
+
+
+C:\tmp
+>
+
+
